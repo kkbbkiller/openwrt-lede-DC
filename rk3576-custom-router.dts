@@ -1,0 +1,455 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Copyright (c) 2026 OpenWrt / LEDE Project
+ * Device Tree for Rockchip RK3576 Custom Board
+ * Features:
+ *  - Dual Gigabit Ethernet (GMAC0, GMAC1 / RGMII)
+ *  - Dual USB 3.0 (DWC3 DRD0 & DRD1) + USB 2.0 Host / Hub
+ *  - DP / Type-C DP Display Output (with DP-to-HDMI compatibility)
+ *  - PCIe 2.0 (RC Mode with 3.3V power regulator and PERST GPIO)
+ *  - SDIO WiFi (AIC8800 / AP6212 compatible) + UART Bluetooth
+ *  - eMMC 5.1 Storage
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/pinctrl/rockchip.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include "rk3576.dtsi"
+
+/ {
+	model = "Rockchip RK3576 Custom Router Board";
+	compatible = "rockchip,rk3576-evb1-v10", "rockchip,rk3576";
+
+	aliases {
+		ethernet0 = &gmac0;
+		ethernet1 = &gmac1;
+		mmc0 = &sdhci;
+		mmc1 = &sdio;
+	};
+
+	chosen {
+		stdout-path = "serial0:1500000n8";
+	};
+
+	/* 电源输入 12V DC */
+	vcc12v_dcin: vcc12v-dcin {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc12v_dcin";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <12000000>;
+		regulator-max-microvolt = <12000000>;
+	};
+
+	/* 5V 系统总线电源 */
+	vcc5v0_sys: vcc5v0-sys {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_sys";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc12v_dcin>;
+	};
+
+	vcc5v0_device: vcc5v0-device {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_device";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc12v_dcin>;
+	};
+
+	/* USB 5V VBUS 供电控制 (GPIO3_D4 = GPIO124, GPIO3_A2 = GPIO98) */
+	vcc5v0_host: vcc5v0-host {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_host";
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio3 RK_PD4 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_device>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb_host_pwren>;
+	};
+
+	vbus5v0_typec: vbus5v0-typec {
+		compatible = "regulator-fixed";
+		regulator-name = "vbus5v0_typec";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio3 RK_PA2 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_device>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb_otg0_pwren>;
+	};
+
+	/* USB Host 额外端口供电 (GPIO4_A1, GPIO4_A0, GPIO3_D5) */
+	vcc5v0_usb_host1: vcc5v0-usb-host1 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_usb_host1";
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio4 RK_PA1 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_device>;
+	};
+
+	vcc5v0_usb_host2: vcc5v0-usb-host2 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_usb_host2";
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio4 RK_PA0 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_device>;
+	};
+
+	vcc5v0_usb_host3: vcc5v0-usb-host3 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_usb_host3";
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio3 RK_PD5 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_device>;
+	};
+
+	/* PCIe 3.3V 供电控制 (GPIO0_D3 = GPIO27) */
+	vcc3v3_pcie: vcc3v3-pcie-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc3v3_pcie";
+		enable-active-high;
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&gpio0 RK_PD3 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+	};
+
+	/* SDIO WiFi 电源时序控制 (GPIO1_C6 = GPIO54 负责 WiFi 上电复位) */
+	sdio_pwrseq: sdio-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		pinctrl-names = "default";
+		pinctrl-0 = <&wifi_poweren_gpio>;
+		post-power-on-delay-ms = <200>;
+		reset-gpios = <&gpio1 RK_PC6 GPIO_ACTIVE_LOW>;
+		status = "okay";
+	};
+
+	/* WiFi 模块平台节点 (AIC8800 / AP6xxx / RTL88xx) */
+	wireless_wlan: wireless-wlan {
+		compatible = "wlan-platdata";
+		wifi_chip_type = "ap6212";
+		pinctrl-names = "default";
+		pinctrl-0 = <&wifi_host_wake_irq>;
+		sdio_vref = <1800>;
+		WIFI,host_wake_irq = <&gpio0 RK_PB0 GPIO_ACTIVE_HIGH>;
+		WIFI,poweren_gpio = <&gpio1 RK_PC6 GPIO_ACTIVE_HIGH>;
+		status = "okay";
+	};
+
+	/* 蓝牙平台节点 (挂载于 UART4) */
+	wireless_bluetooth: wireless-bluetooth {
+		compatible = "bluetooth-platdata";
+		bt_port = "/dev/ttyS4";
+		uart_rts_gpios = <&gpio1 RK_PC2 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default", "rts_gpio";
+		pinctrl-0 = <&uart4m0_xfer>;
+		pinctrl-1 = <&uart4_gpios>;
+		BT,reset_gpio = <&gpio1 RK_PC7 GPIO_ACTIVE_LOW>;
+		BT,wake_gpio = <&gpio1 RK_PD4 GPIO_ACTIVE_HIGH>;
+		BT,wake_host_irq = <&gpio0 RK_PB1 GPIO_ACTIVE_HIGH>;
+		status = "okay";
+	};
+
+	/* 板载状态指示灯 (GPIO0_A7 = GPIO7) */
+	leds: leds {
+		compatible = "gpio-leds";
+
+		work_led: work {
+			gpios = <&gpio0 RK_PA7 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "heartbeat";
+			default-state = "on";
+		};
+	};
+
+	/* DP / DP-to-HDMI 显示输出面板定义 */
+	panel_dp: panel-dp {
+		compatible = "simple-panel";
+		status = "okay";
+
+		ports {
+			panel_in_dp: endpoint {
+				remote-endpoint = <&dp_out_panel>;
+			};
+		};
+	};
+};
+
+/* =========================================================================
+ * 1. 千兆网口 GMAC0 (LAN / WAN) - RGMII-RXID 模式
+ * ========================================================================= */
+&gmac0 {
+	phy-mode = "rgmii-rxid";
+	clock_in_out = "output";
+	snps,reset-gpio = <&gpio2 RK_PB3 GPIO_ACTIVE_LOW>;
+	snps,reset-active-low;
+	snps,reset-delays-us = <0 20000 100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&eth0m0_miim
+		     &eth0m0_tx_bus2
+		     &eth0m0_rx_bus2
+		     &eth0m0_rgmii_clk
+		     &eth0m0_rgmii_bus
+		     &ethm0_clk0_25m_out>;
+	tx_delay = <0x21>;
+	assigned-clocks = <&cru CLK_GMAC0>;
+	assigned-clock-rates = <125000000>;
+	phy-handle = <&rgmii_phy0>;
+	status = "okay";
+
+	mdio0: mdio {
+		compatible = "snps,dwmac-mdio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		rgmii_phy0: phy@1 {
+			compatible = "ethernet-phy-ieee802.3-c22";
+			reg = <0x1>;
+			clocks = <&cru CLK_MAC0_PHY>;
+		};
+	};
+};
+
+/* =========================================================================
+ * 2. 千兆网口 GMAC1 (LAN / WAN) - RGMII-RXID 模式
+ * ========================================================================= */
+&gmac1 {
+	phy-mode = "rgmii-rxid";
+	clock_in_out = "output";
+	snps,reset-gpio = <&gpio2 RK_PB4 GPIO_ACTIVE_LOW>;
+	snps,reset-active-low;
+	snps,reset-delays-us = <0 20000 100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&eth1m0_miim
+		     &eth1m0_tx_bus2
+		     &eth1m0_rx_bus2
+		     &eth1m0_rgmii_clk
+		     &eth1m0_rgmii_bus
+		     &ethm0_clk1_25m_out>;
+	tx_delay = <0x20>;
+	assigned-clocks = <&cru CLK_GMAC1>;
+	assigned-clock-rates = <125000000>;
+	phy-handle = <&rgmii_phy1>;
+	status = "okay";
+
+	mdio1: mdio {
+		compatible = "snps,dwmac-mdio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		rgmii_phy1: phy@1 {
+			compatible = "ethernet-phy-ieee802.3-c22";
+			reg = <0x1>;
+			clocks = <&cru CLK_MAC1_PHY>;
+		};
+	};
+};
+
+/* =========================================================================
+ * 3. 双 USB 3.0 / USB 2.0 (DWC3 控制器及对应 PHY)
+ * ========================================================================= */
+/* USB 2.0 PHY 0 & 1 */
+&u2phy0 {
+	status = "okay";
+};
+
+&u2phy0_otg {
+	status = "okay";
+	vbus-supply = <&vbus5v0_typec>;
+};
+
+&u2phy1 {
+	status = "okay";
+};
+
+&u2phy1_otg {
+	status = "okay";
+	phy-supply = <&vcc5v0_host>;
+};
+
+/* USB3 Combo PHY (PIPE PHY 1: 配合 USB3 DRD1 使用) */
+&combphy1 {
+	status = "okay";
+};
+
+/* USB 3.0 控制器 0 (Type-C / OTG 或 Host) */
+&usb_drd0_dwc3 {
+	dr_mode = "otg";
+	status = "okay";
+	phys = <&u2phy0_otg>, <&usbdp_phy_u3>;
+	phy-names = "usb2-phy", "usb3-phy";
+};
+
+/* USB 3.0 控制器 1 (标准 USB 3.0 Host 接口) */
+&usb_drd1_dwc3 {
+	dr_mode = "host";
+	status = "okay";
+	phys = <&u2phy1_otg>, <&combphy1 PHY_TYPE_USB3>;
+	phy-names = "usb2-phy", "usb3-phy";
+};
+
+/* =========================================================================
+ * 4. PCIe 2.0 接口 (支持 PCIe 网卡 / NVMe / 5G 模块)
+ * ========================================================================= */
+&combphy0 {
+	status = "okay";
+};
+
+&pcie0 {
+	reset-gpios = <&gpio2 RK_PB1 GPIO_ACTIVE_HIGH>;
+	vpcie3v3-supply = <&vcc3v3_pcie>;
+	phys = <&combphy0 PHY_TYPE_PCIE>;
+	phy-names = "pcie-phy";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pcie0m0_pins>;
+	rockchip,skip-scan-in-resume;
+	status = "okay";
+};
+
+/* =========================================================================
+ * 5. DP 显示控制器 (原生 DP / DP 转 HDMI 芯片连接)
+ * ========================================================================= */
+/* USB-DP 综合 PHY */
+&usbdp_phy {
+	status = "okay";
+	rockchip,dp-lane-mux = <2 3>;
+};
+
+&usbdp_phy_dp {
+	status = "okay";
+};
+
+&usbdp_phy_u3 {
+	status = "okay";
+};
+
+&dp {
+	status = "okay";
+	hpd-gpios = <&gpio0 RK_PC5 GPIO_ACTIVE_HIGH>;
+	phys = <&usbdp_phy_dp>;
+
+	dp0: dp0 {
+		status = "okay";
+
+		ports {
+			port@1 {
+				dp_out_panel: endpoint {
+					remote-endpoint = <&panel_in_dp>;
+				};
+			};
+		};
+	};
+};
+
+/* =========================================================================
+ * 6. SDIO WiFi 模块接口 (MMC1)
+ * ========================================================================= */
+&sdio {
+	max-frequency = <150000000>;
+	no-sd;
+	no-mmc;
+	supports-sdio;
+	bus-width = <4>;
+	disable-wp;
+	cap-sd-highspeed;
+	cap-sdio-irq;
+	keep-power-in-suspend;
+	mmc-pwrseq = <&sdio_pwrseq>;
+	non-removable;
+	num-slots = <1>;
+	rockchip,default-sample-phase = <90>;
+	sd-uhs-sdr104;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc1m0_bus4 &sdmmc1m0_cmd &sdmmc1m0_clk>;
+	status = "okay";
+};
+
+/* =========================================================================
+ * 7. eMMC 5.1 板载存储
+ * ========================================================================= */
+&sdhci {
+	bus-width = <8>;
+	no-sdio;
+	no-sd;
+	non-removable;
+	max-frequency = <200000000>;
+	mmc-hs400-1_8v;
+	mmc-hs400-enhanced-strobe;
+	full-pwr-cycle-in-suspend;
+	status = "okay";
+};
+
+/* =========================================================================
+ * 8. 调试串口与蓝牙串口
+ * ========================================================================= */
+/* 调试串口 UART0 (波特率 1500000) */
+&uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0m0_xfer>;
+	status = "okay";
+};
+
+/* 蓝牙连接串口 UART4 */
+&uart4 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart4m0_xfer &uart4m0_ctsn &uart4m0_rtsn>;
+	status = "okay";
+};
+
+/* =========================================================================
+ * 9. Pinctrl 引脚定义补充
+ * ========================================================================= */
+&pinctrl {
+	usb {
+		usb_host_pwren: usb-host-pwren {
+			rockchip,pins = <3 RK_PD4 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		usb_otg0_pwren: usb-otg0-pwren {
+			rockchip,pins = <3 RK_PA2 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	wireless-wlan {
+		wifi_host_wake_irq: wifi-host-wake-irq {
+			rockchip,pins = <0 RK_PB0 RK_FUNC_GPIO &pcfg_pull_down>;
+		};
+
+		wifi_poweren_gpio: wifi-poweren-gpio {
+			rockchip,pins = <1 RK_PC6 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	wireless-bluetooth {
+		uart4_gpios: uart4-gpios {
+			rockchip,pins = <1 RK_PC2 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+};
