@@ -5,7 +5,8 @@
  * Features:
  *  - Dual Gigabit Ethernet (GMAC0, GMAC1 / RGMII)
  *  - Dual USB 3.0 (DWC3 DRD0 & DRD1) + USB 2.0 Host / Hub
- *  - DP / Type-C DP Display Output (with DP-to-HDMI compatibility)
+ *  - Display pipeline deferred: Android dump describes DSI/CS5518;
+ *    no unverified DP controller is instantiated for this kernel.
  *  - PCIe 2.0 (RC Mode with 3.3V power regulator and PERST GPIO)
  *  - SDIO WiFi (AIC8800 / AP6212 compatible) + UART Bluetooth
  *  - eMMC 5.1 Storage
@@ -13,6 +14,8 @@
 
 /dts-v1/;
 
+#include <dt-bindings/clock/rockchip,rk3576-cru.h>
+#include <dt-bindings/phy/phy.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/pinctrl/rockchip.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
@@ -21,7 +24,7 @@
 
 / {
 	model = "Rockchip RK3576 Custom Router Board";
-	compatible = "rockchip,rk3576-evb1-v10", "rockchip,rk3576";
+	compatible = "rockchip,rk3576-custom-router", "rockchip,rk3576";
 
 	aliases {
 		ethernet0 = &gmac0;
@@ -139,7 +142,6 @@
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
 		gpio = <&gpio0 RK_PD3 GPIO_ACTIVE_HIGH>;
-		pinctrl-names = "default";
 	};
 
 	/* SDIO WiFi 电源时序控制 (GPIO1_C6 = GPIO54 负责 WiFi 上电复位) */
@@ -175,7 +177,8 @@
 		BT,reset_gpio = <&gpio1 RK_PC7 GPIO_ACTIVE_LOW>;
 		BT,wake_gpio = <&gpio1 RK_PD4 GPIO_ACTIVE_HIGH>;
 		BT,wake_host_irq = <&gpio0 RK_PB1 GPIO_ACTIVE_HIGH>;
-		status = "okay";
+		/* BSP platdata cannot safely claim GMAC1 pins in this baseline. */
+		status = "disabled";
 	};
 
 	/* 板载状态指示灯 (GPIO0_A7 = GPIO7) */
@@ -189,17 +192,10 @@
 		};
 	};
 
-	/* DP / DP-to-HDMI 显示输出面板定义 */
-	panel_dp: panel-dp {
-		compatible = "simple-panel";
-		status = "okay";
-
-		ports {
-			panel_in_dp: endpoint {
-				remote-endpoint = <&dp_out_panel>;
-			};
-		};
-	};
+	/* Display migration is deferred, not converted to native HDMI.
+	 * Android dump: CS5518 at I2C3/0x39, LCD power GPIO0_C6,
+	 * panel enable GPIO0_C7. BSP driver/DSI graph need a separate port.
+	 */
 };
 
 /* =========================================================================
@@ -219,7 +215,7 @@
 		     &eth0m0_rgmii_bus
 		     &ethm0_clk0_25m_out>;
 	tx_delay = <0x21>;
-	assigned-clocks = <&cru CLK_GMAC0>;
+	assigned-clocks = <&cru CLK_GMAC0_125M_SRC>;
 	assigned-clock-rates = <125000000>;
 	phy-handle = <&rgmii_phy0>;
 	status = "okay";
@@ -232,7 +228,9 @@
 		rgmii_phy0: phy@1 {
 			compatible = "ethernet-phy-ieee802.3-c22";
 			reg = <0x1>;
-			clocks = <&cru CLK_MAC0_PHY>;
+			clocks = <&cru REFCLKO25M_GMAC0_OUT>;
+			assigned-clocks = <&cru REFCLKO25M_GMAC0_OUT>;
+			assigned-clock-rates = <25000000>;
 		};
 	};
 };
@@ -254,7 +252,7 @@
 		     &eth1m0_rgmii_bus
 		     &ethm0_clk1_25m_out>;
 	tx_delay = <0x20>;
-	assigned-clocks = <&cru CLK_GMAC1>;
+	assigned-clocks = <&cru CLK_GMAC1_125M_SRC>;
 	assigned-clock-rates = <125000000>;
 	phy-handle = <&rgmii_phy1>;
 	status = "okay";
@@ -267,7 +265,9 @@
 		rgmii_phy1: phy@1 {
 			compatible = "ethernet-phy-ieee802.3-c22";
 			reg = <0x1>;
-			clocks = <&cru CLK_MAC1_PHY>;
+			clocks = <&cru REFCLKO25M_GMAC1_OUT>;
+			assigned-clocks = <&cru REFCLKO25M_GMAC1_OUT>;
+			assigned-clock-rates = <25000000>;
 		};
 	};
 };
@@ -295,7 +295,7 @@
 };
 
 /* USB3 Combo PHY (PIPE PHY 1: 配合 USB3 DRD1 使用) */
-&combphy1 {
+&combphy1_psu {
 	status = "okay";
 };
 
@@ -303,7 +303,7 @@
 &usb_drd0_dwc3 {
 	dr_mode = "otg";
 	status = "okay";
-	phys = <&u2phy0_otg>, <&usbdp_phy_u3>;
+	phys = <&u2phy0_otg>, <&usbdp_phy PHY_TYPE_USB3>;
 	phy-names = "usb2-phy", "usb3-phy";
 };
 
@@ -311,21 +311,24 @@
 &usb_drd1_dwc3 {
 	dr_mode = "host";
 	status = "okay";
-	phys = <&u2phy1_otg>, <&combphy1 PHY_TYPE_USB3>;
+	phys = <&u2phy1_otg>, <&combphy1_psu PHY_TYPE_USB3>;
 	phy-names = "usb2-phy", "usb3-phy";
 };
 
 /* =========================================================================
  * 4. PCIe 2.0 接口 (支持 PCIe 网卡 / NVMe / 5G 模块)
  * ========================================================================= */
-&combphy0 {
+&combphy0_ps {
 	status = "okay";
 };
 
 &pcie0 {
+	/* Linux 6.18.58 pcie-dw-rockchip drives 0 to reset, 1 to release.
+	 * Keep ACTIVE_HIGH as in the Android dump; do not invert PERST# here.
+	 */
 	reset-gpios = <&gpio2 RK_PB1 GPIO_ACTIVE_HIGH>;
 	vpcie3v3-supply = <&vcc3v3_pcie>;
-	phys = <&combphy0 PHY_TYPE_PCIE>;
+	phys = <&combphy0_ps PHY_TYPE_PCIE>;
 	phy-names = "pcie-phy";
 	pinctrl-names = "default";
 	pinctrl-0 = <&pcie0m0_pins>;
@@ -334,38 +337,12 @@
 };
 
 /* =========================================================================
- * 5. DP 显示控制器 (原生 DP / DP 转 HDMI 芯片连接)
+ * 5. USB-DP combo PHY: use mainline single-provider USB3 binding.
+ *    Display remains deferred pending the board's DSI/CS5518 driver port.
+ *    This does not assert that the physical board lacks DisplayPort.
  * ========================================================================= */
-/* USB-DP 综合 PHY */
 &usbdp_phy {
 	status = "okay";
-	rockchip,dp-lane-mux = <2 3>;
-};
-
-&usbdp_phy_dp {
-	status = "okay";
-};
-
-&usbdp_phy_u3 {
-	status = "okay";
-};
-
-&dp {
-	status = "okay";
-	hpd-gpios = <&gpio0 RK_PC5 GPIO_ACTIVE_HIGH>;
-	phys = <&usbdp_phy_dp>;
-
-	dp0: dp0 {
-		status = "okay";
-
-		ports {
-			port@1 {
-				dp_out_panel: endpoint {
-					remote-endpoint = <&panel_in_dp>;
-				};
-			};
-		};
-	};
 };
 
 /* =========================================================================
@@ -383,7 +360,6 @@
 	keep-power-in-suspend;
 	mmc-pwrseq = <&sdio_pwrseq>;
 	non-removable;
-	num-slots = <1>;
 	rockchip,default-sample-phase = <90>;
 	sd-uhs-sdr104;
 	pinctrl-names = "default";
@@ -416,11 +392,11 @@
 	status = "okay";
 };
 
-/* 蓝牙连接串口 UART4 */
+/* UART4 m0 exists in 6.18.58 but overlaps GMAC1 m0 on GPIO2_C6/C7/D0/D1.
+ * Do not remux a live Ethernet bus. BT routing/serdev migration is deferred.
+ */
 &uart4 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&uart4m0_xfer &uart4m0_ctsn &uart4m0_rtsn>;
-	status = "okay";
+	status = "disabled";
 };
 
 /* =========================================================================

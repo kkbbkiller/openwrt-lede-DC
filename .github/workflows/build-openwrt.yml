@@ -7,6 +7,7 @@ on:
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
   REPO_BRANCH: master
+  LEDE_SHA: 8867669e23613233dde23cad3efe9d1f5de2cec8
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy.sh
@@ -38,7 +39,11 @@ jobs:
     - name: Clone Source Code
       run: |
         df -h
-        git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+        git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" openwrt
+        git -C openwrt fetch --depth 1 origin "$LEDE_SHA"
+        git -C openwrt checkout --detach "$LEDE_SHA"
+        test "$(git -C openwrt rev-parse HEAD)" = "$LEDE_SHA"
+        git -C openwrt log -1 --format='LEDE commit: %H%nCommit date: %cI%nSubject: %s'
 
     - name: Update Feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -60,9 +65,71 @@ jobs:
       run: |
         cd openwrt
         make defconfig
+        grep -qx 'CONFIG_TARGET_rockchip=y' .config
+        grep -qx 'CONFIG_TARGET_rockchip_armv8=y' .config
+        grep -qx 'CONFIG_TARGET_rockchip_armv8_DEVICE_rockchip_rk3576-custom-router=y' .config
+        grep -qx 'CONFIG_PACKAGE_u-boot-generic-rk3576=y' .config
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
+
+    - name: Prepare Host Tools and Kernel Sources
+      run: |
+        cd openwrt
+        make tools/install -j"$(nproc)" V=s
+        make target/linux/prepare V=s
+
+    - name: DTS Preflight and Build Metadata
+      run: |
+        set -euo pipefail
+        cd openwrt
+        mkdir -p build-metadata
+        mapfile -t kernels < <(find build_dir -type f -path '*/linux-rockchip_armv8/linux-*/arch/arm64/boot/dts/rockchip/rk3576-custom-router.dts' -print)
+        test "${#kernels[@]}" -eq 1
+        DTS="${kernels[0]}"
+        KERNEL_DIR="${DTS%/arch/arm64/boot/dts/rockchip/rk3576-custom-router.dts}"
+        cmp rk3576-custom-router.dts "$DTS"
+        test -f "$KERNEL_DIR/arch/arm64/boot/dts/rockchip/rk3576.dtsi"
+        gcc -E -nostdinc -undef -D__DTS__ -x assembler-with-cpp \
+          -I "$KERNEL_DIR/include" \
+          -I "$KERNEL_DIR/scripts/dtc/include-prefixes" \
+          -I "$KERNEL_DIR/arch/arm64/boot/dts" \
+          -I "$KERNEL_DIR/arch/arm64/boot/dts/rockchip" \
+          "$DTS" -o build-metadata/rk3576-custom-router.preprocessed.dts
+        dtc -I dts -O dtb \
+          -i "$KERNEL_DIR/arch/arm64/boot/dts/rockchip" \
+          -o build-metadata/rk3576-custom-router.dtb \
+          build-metadata/rk3576-custom-router.preprocessed.dts \
+          2> >(tee build-metadata/dtc.log >&2)
+        MODEL="$(fdtget -t s build-metadata/rk3576-custom-router.dtb / model)"
+        {
+          echo "LEDE_SHA=$(git rev-parse HEAD)"
+          echo "CUSTOM_REPO_SHA=${GITHUB_SHA}"
+          echo "KERNEL_VERSION=${KERNEL_DIR##*/linux-}"
+          echo "DTS_SHA256=$(sha256sum "$DTS" | cut -d ' ' -f 1)"
+          echo "DTS_MODEL=$MODEL"
+          echo "UBOOT_DEVICE_NAME=generic-rk3576"
+          echo "VALIDATION=基础适配待上板；DTS 编译通过不代表硬件验证通过"
+          echo "WARNING=generic U-Boot 硬件兼容未验证，不得直接刷写 eMMC"
+        } | tee build-metadata/build-info.txt
+        cp .config build-metadata/lede.config
+        cp rk3576-custom-router.dts build-metadata/
+        cp feeds.conf.default build-metadata/
+        for feed in feeds/*; do
+          if [ -d "$feed/.git" ] || [ -f "$feed/.git" ]; then
+            printf '%s %s\n' "${feed##*/}" "$(git -C "$feed" rev-parse HEAD)"
+          fi
+        done > build-metadata/feeds-revisions.txt
+        cp target/linux/rockchip/image/armv8.mk build-metadata/
+        cp package/boot/uboot-rockchip/Makefile build-metadata/uboot-rockchip.mk
+
+    - name: Upload DTS Preflight Metadata
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: RK3576_DTS_preflight_${{ env.LEDE_SHA }}
+        path: openwrt/build-metadata
+        if-no-files-found: warn
 
     - name: Compile the Firmware
       id: compile
@@ -85,6 +152,8 @@ jobs:
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
+        cp "$GITHUB_WORKSPACE/openwrt/build-metadata/build-info.txt" ./build-info.txt
+        tar -czf build-metadata.tar.gz -C "$GITHUB_WORKSPACE/openwrt" build-metadata
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -100,13 +169,15 @@ jobs:
       if: steps.organize.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        touch release.txt
-        echo "### RK3576 OpenWrt / LEDE Custom Firmware" >> release.txt
-        echo "- 双千兆网口 (GMAC0/GMAC1 RGMII)" >> release.txt
-        echo "- 双 USB 3.0 / USB 2.0" >> release.txt
-        echo "- DP / DP-to-HDMI 显示支持" >> release.txt
-        echo "- PCIe 2.0 控制器" >> release.txt
-        echo "- 板载 SDIO WiFi / 蓝牙" >> release.txt
+        {
+          echo "### RK3576 OpenWrt / LEDE Custom Firmware"
+          echo "- LEDE 源码固定提交：$LEDE_SHA"
+          echo "- 基础适配待上板，DTS 编译通过不等于启动或外设验证通过。"
+          echo "- 网口、USB、PCIe、电源和存储仍需实机验证。"
+          echo "- DP / DP-to-HDMI、WiFi、蓝牙未验证，不声明可用。"
+          echo "- generic-rk3576 U-Boot 的 DDR、供电和启动介质兼容性未验证，不得直接刷写 eMMC。"
+          echo "- 应先确认串口、恢复手段及原始固件备份，再进行可恢复介质测试。"
+        } > release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload Firmware to Release
