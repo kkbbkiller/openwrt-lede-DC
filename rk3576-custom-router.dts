@@ -282,7 +282,10 @@
 
 &u2phy0_otg {
 	status = "okay";
-	vbus-supply = <&vbus5v0_typec>;
+	/* Generic PHY supply enables the existing VBUS rail in fixed host mode.
+	 * Preserve the original GPIO; its Type-A VBUS routing needs board testing.
+	 */
+	phy-supply = <&vbus5v0_typec>;
 };
 
 &u2phy1 {
@@ -299,13 +302,12 @@
 	status = "okay";
 };
 
-/* USB0 boot diagnostic: isolate the OTG-to-host SError path.
- * Keep PHYs, supplies and USB1 unchanged for a single-variable test.
- * Type-C role-switch migration is incomplete; this is not a final USB fix.
+/* USB0 is wired to a fixed Type-A host, not a dual-role Type-C port.
+ * Avoid the unused OTG role-switch path; host/USB3 operation needs testing.
  */
 &usb_drd0_dwc3 {
-	dr_mode = "otg";
-	status = "disabled";
+	dr_mode = "host";
+	status = "okay";
 	phys = <&u2phy0_otg>, <&usbdp_phy PHY_TYPE_USB3>;
 	phy-names = "usb2-phy", "usb3-phy";
 };
@@ -345,6 +347,10 @@
  *    This does not assert that the physical board lacks DisplayPort.
  * ========================================================================= */
 &usbdp_phy {
+	/* Fixed split from the board wiring and Android DT: USB on RX1/TX1,
+	 * DP on the remaining pair of lanes. This does not enable DP display.
+	 */
+	rockchip,dp-lane-mux = <2 3>;
 	status = "okay";
 };
 
@@ -379,8 +385,9 @@
 	no-sd;
 	non-removable;
 	max-frequency = <200000000>;
-	mmc-hs400-1_8v;
-	mmc-hs400-enhanced-strobe;
+	/* HS200 SDR fallback; keep CQE unchanged to test timing separately. */
+	mmc-hs200-1_8v;
+	no-mmc-hs400;
 	full-pwr-cycle-in-suspend;
 	status = "okay";
 };
