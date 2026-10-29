@@ -32,6 +32,17 @@ device = f"""define Device/{name}
   SOC := rk3576
   DEVICE_DTS := rk3576-custom-router
   UBOOT_DEVICE_NAME := generic-rk3576
+  # Platform layout variables are not reset by Device/Init. Clear the
+  # preceding OEC device's ext4/GPT/bootloader layout before this image.
+  # Use empty values: GNU make treats the nonempty string "0" as true.
+  IMAGE_PART_OFFSET :=
+  IMAGE_PART_ALIGN :=
+  IMAGE_GPT :=
+  IMAGE_BOOTFS :=
+  BOOTLOADER_IMAGE :=
+  BOOTLOADER_OFFSET :=
+  ENV_IMAGE :=
+  ENV_OFFSET :=
   IMAGE/sysupgrade.img.gz := boot-common | boot-script | pine64-img | gzip | append-metadata
   DEVICE_PACKAGES := kmod-r8169 kmod-usb3 kmod-usb-dwc3 kmod-usb-storage
 endef
