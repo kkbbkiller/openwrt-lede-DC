@@ -299,10 +299,13 @@
 	status = "okay";
 };
 
-/* USB 3.0 控制器 0 (Type-C / OTG 或 Host) */
+/* USB0 boot diagnostic: isolate the OTG-to-host SError path.
+ * Keep PHYs, supplies and USB1 unchanged for a single-variable test.
+ * Type-C role-switch migration is incomplete; this is not a final USB fix.
+ */
 &usb_drd0_dwc3 {
 	dr_mode = "otg";
-	status = "okay";
+	status = "disabled";
 	phys = <&u2phy0_otg>, <&usbdp_phy PHY_TYPE_USB3>;
 	phy-names = "usb2-phy", "usb3-phy";
 };
