@@ -44,7 +44,7 @@ device = f"""define Device/{name}
   ENV_IMAGE :=
   ENV_OFFSET :=
   IMAGE/sysupgrade.img.gz := boot-common | boot-script | pine64-img | gzip | append-metadata
-  DEVICE_PACKAGES := kmod-r8169 kmod-usb3 kmod-usb-dwc3 kmod-usb-storage
+  DEVICE_PACKAGES := kmod-r8169 kmod-usb3 kmod-usb-dwc3 kmod-usb-storage kmod-aic8800-sdio aic8800-sdio-firmware kmod-bluetooth bluez-daemon bluez-utils bluez-utils-extra bluez-utils-btmon usbutils pciutils iw iwinfo
 endef
 TARGET_DEVICES += {name}
 """
@@ -61,6 +61,13 @@ if not re.search(r"(?m)^\s*BUILD_DEVICES\s*:?=", block):
 if name not in block.split():
     updated = block.removesuffix("endef") + f"  BUILD_DEVICES += {name}\nendef"
     uboot_text = uboot_text[:blocks[0].start()] + updated + uboot_text[blocks[0].end():]
+
+# Keep LEDE's native AIC SDIO WiFi + HCI transport and firmware packaging.
+# Do not enable BCM/UART or add a second Bluetooth firmware loader.
+aic_text = Path("package/kernel/aic8800/Makefile").read_text(encoding="utf-8")
+for token in ["KernelPackage/aic8800-sdio", "CONFIG_SDIO_BT=y", "aic8800D80/*"]:
+    if token not in aic_text:
+        raise SystemExit(f"AIC8800 package changed; missing {token}")
 
 network = Path("target/linux/rockchip/armv8/base-files/etc/board.d/02_network")
 network_text = network.read_text(encoding="utf-8")
@@ -80,4 +87,4 @@ network.write_text(network_text, encoding="utf-8")
 print("已更新镜像、U-Boot 关联和 LAN=eth1/WAN=eth0（物理插孔待确认）")
 PY
 
-echo ">>> DIY 完成；网络/USB 包仅保留原有选择，不代表板载 PHY 已验证。"
+echo ">>> DIY 完成；已接入 AIC8800D80 SDIO WiFi/BT 和诊断工具，硬件功能待上板验证。"

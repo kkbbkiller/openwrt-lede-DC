@@ -69,6 +69,25 @@ jobs:
         grep -qx 'CONFIG_TARGET_rockchip_armv8=y' .config
         grep -qx 'CONFIG_TARGET_rockchip_armv8_DEVICE_rockchip_rk3576-custom-router=y' .config
         grep -qx 'CONFIG_PACKAGE_u-boot-generic-rk3576=y' .config
+        # Fail early if defconfig drops required wireless or diagnostic packages.
+        python3 - <<'PY'
+        from pathlib import Path
+        required = """
+        kmod-aic8800-sdio aic8800-sdio-firmware kmod-bluetooth
+        bluez-daemon bluez-utils bluez-utils-extra bluez-utils-btmon
+        iw iwinfo wireless-regdb wpad-basic-wolfssl
+        usbutils pciutils kmod-i2c-core i2c-tools gpiod-tools
+        ip-full ss htop strace lsblk blkid block-mount
+        ethtool tcpdump iperf3
+        """.split()
+        selected = set(Path(".config").read_text().splitlines())
+        missing = [name for name in required
+                   if f"CONFIG_PACKAGE_{name}=y" not in selected]
+        if missing:
+            raise SystemExit("Required built-in packages lost after defconfig: "
+                             + ", ".join(missing))
+        print("Required wireless / Bluetooth / diagnostic packages: PASS")
+        PY
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
