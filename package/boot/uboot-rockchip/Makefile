@@ -434,6 +434,7 @@ define U-Boot/generic-rk3576
     ariaboard_photonicat2 \
     friendlyarm_nanopi-m5 \
     friendlyarm_nanopi-r76s
+  BUILD_DEVICES += rockchip_rk3576-dc-s576
 endef
 
 define U-Boot/rock-4d-rk3576

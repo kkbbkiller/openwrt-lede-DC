@@ -8,6 +8,9 @@ rockchip_setup_interfaces()
 	local board="$1"
 
 	case "$board" in
+	rockchip,rk3576-dc-s576)
+		ucidef_set_interfaces_lan_wan 'eth1' 'eth0'
+		;;
 	advantech,rsb4810|\
 	ariaboard,photonicat|\
 	ariaboard,photonicat2|\

@@ -1,0 +1,218 @@
+name: Build OpenWrt for RK3576-DC-S576
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SOURCE_BRANCH: openwrt-LEDE-DC
+  UPSTREAM_LEDE_SHA: 8867669e23613233dde23cad3efe9d1f5de2cec8
+  ORIGINAL_ADAPTATION_SHA: fb15c2ee5951b9588342566cad3f2e93661e7166
+  NATIVE_DTS: target/linux/rockchip/files/arch/arm64/boot/dts/rockchip/rk3576-dc-s576.dts
+  NATIVE_UBOOT_PATCH: package/boot/uboot-rockchip/patches/950-rk3576-generic-enable-saradc-download-key.patch
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - name: Checkout RK3576-DC-S576 Source
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        path: openwrt
+
+    - name: Record Source Revision
+      run: |
+        cd openwrt
+        test -f .config
+        test -f "$NATIVE_DTS"
+        test -f "$NATIVE_UBOOT_PATCH"
+        echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+        git log -1 --format='Source commit: %H%nCommit date: %cI%nSubject: %s'
+
+    - name: Initialize Environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -a -f
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pip python3-ply python3-docutils python3-pyelftools libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev python3-setuptools
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+
+    - name: Update Feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: Install Feeds
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: Check Configuration and Download Packages
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        grep -qx 'CONFIG_TARGET_rockchip=y' .config
+        grep -qx 'CONFIG_TARGET_rockchip_armv8=y' .config
+        grep -qx 'CONFIG_TARGET_rockchip_armv8_DEVICE_rockchip_rk3576-dc-s576=y' .config
+        grep -qx 'CONFIG_PACKAGE_u-boot-generic-rk3576=y' .config
+        # 配置展开后必须保留内置无线、蓝牙及诊断软件包。
+        python3 - <<'PY'
+        from pathlib import Path
+        required = """
+        kmod-aic8800-sdio aic8800-sdio-firmware kmod-bluetooth
+        bluez-daemon bluez-utils bluez-utils-extra bluez-utils-btmon
+        iw iwinfo wireless-regdb wpad-basic-wolfssl
+        usbutils pciutils kmod-i2c-core i2c-tools gpiod-tools
+        ip-full ss htop strace lsblk blkid block-mount
+        ethtool tcpdump iperf3
+        """.split()
+        selected = set(Path(".config").read_text().splitlines())
+        missing = [name for name in required
+                   if f"CONFIG_PACKAGE_{name}=y" not in selected]
+        if missing:
+            raise SystemExit("Required built-in packages lost after defconfig: "
+                             + ", ".join(missing))
+        print("Required wireless / Bluetooth / diagnostic packages: PASS")
+        PY
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: Prepare Host Tools and Kernel Sources
+      run: |
+        cd openwrt
+        make tools/install -j"$(nproc)" V=s
+        make target/linux/prepare V=s
+
+    - name: DTS Preflight and Build Metadata
+      run: |
+        set -euo pipefail
+        cd openwrt
+        mkdir -p build-metadata
+        mapfile -t kernels < <(find build_dir -type f -path '*/linux-rockchip_armv8/linux-*/arch/arm64/boot/dts/rockchip/rk3576-dc-s576.dts' -print)
+        test "${#kernels[@]}" -eq 1
+        DTS="${kernels[0]}"
+        KERNEL_DIR="${DTS%/arch/arm64/boot/dts/rockchip/rk3576-dc-s576.dts}"
+        cmp "$NATIVE_DTS" "$DTS"
+        test -f "$KERNEL_DIR/arch/arm64/boot/dts/rockchip/rk3576.dtsi"
+        gcc -E -nostdinc -undef -D__DTS__ -x assembler-with-cpp \
+          -I "$KERNEL_DIR/include" \
+          -I "$KERNEL_DIR/scripts/dtc/include-prefixes" \
+          -I "$KERNEL_DIR/arch/arm64/boot/dts" \
+          -I "$KERNEL_DIR/arch/arm64/boot/dts/rockchip" \
+          "$DTS" -o build-metadata/rk3576-dc-s576.preprocessed.dts
+        dtc -I dts -O dtb \
+          -i "$KERNEL_DIR/arch/arm64/boot/dts/rockchip" \
+          -o build-metadata/rk3576-dc-s576.dtb \
+          build-metadata/rk3576-dc-s576.preprocessed.dts \
+          2> >(tee build-metadata/dtc.log >&2)
+        MODEL="$(fdtget -t s build-metadata/rk3576-dc-s576.dtb / model)"
+        {
+          echo "SOURCE_SHA=$(git rev-parse HEAD)"
+          echo "SOURCE_BRANCH=$SOURCE_BRANCH"
+          echo "TRIGGER_SHA=${GITHUB_SHA}"
+          echo "UPSTREAM_LEDE_SHA=$UPSTREAM_LEDE_SHA"
+          echo "ORIGINAL_ADAPTATION_SHA=$ORIGINAL_ADAPTATION_SHA"
+          echo "KERNEL_VERSION=${KERNEL_DIR##*/linux-}"
+          echo "DTS_NATIVE_PATH=$NATIVE_DTS"
+          echo "DTS_SHA256=$(sha256sum "$NATIVE_DTS" | cut -d ' ' -f 1)"
+          echo "DTS_MODEL=$MODEL"
+          echo "UBOOT_PATCH_PATH=$NATIVE_UBOOT_PATCH"
+          echo "UBOOT_PATCH_SHA256=$(sha256sum "$NATIVE_UBOOT_PATCH" | cut -d ' ' -f 1)"
+          echo "UBOOT_DEVICE_NAME=generic-rk3576"
+          echo "VALIDATION=基础适配待上板；DTS 编译通过不代表硬件验证通过"
+          echo "WARNING=generic U-Boot 硬件兼容未验证，不得直接刷写 eMMC"
+        } | tee build-metadata/build-info.txt
+        cp .config build-metadata/lede.config
+        cp "$NATIVE_DTS" build-metadata/
+        cp "$NATIVE_UBOOT_PATCH" build-metadata/
+        cp feeds.conf.default build-metadata/
+        for feed in feeds/*; do
+          if [ -d "$feed/.git" ] || [ -f "$feed/.git" ]; then
+            printf '%s %s\n' "${feed##*/}" "$(git -C "$feed" rev-parse HEAD)"
+          fi
+        done > build-metadata/feeds-revisions.txt
+        cp target/linux/rockchip/image/armv8.mk build-metadata/
+        cp package/boot/uboot-rockchip/Makefile build-metadata/uboot-rockchip.mk
+
+    - name: Upload DTS Preflight Metadata
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: RK3576-DC-S576_DTS_preflight_${{ env.SOURCE_SHA }}
+        path: openwrt/build-metadata
+        if-no-files-found: warn
+
+    - name: Compile the Firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo "$(nproc) thread compile"
+        make -j"$(nproc)" || make -j1 || make -j1 V=s
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> "$GITHUB_ENV"
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> "$GITHUB_ENV"
+        echo "status=success" >> "$GITHUB_OUTPUT"
+
+    - name: Check Space Usage
+      if: (!cancelled())
+      run: df -hT
+
+    - name: Organize Firmware Files
+      id: organize
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        cp "$GITHUB_WORKSPACE/openwrt/build-metadata/build-info.txt" ./build-info.txt
+        tar -czf build-metadata.tar.gz -C "$GITHUB_WORKSPACE/openwrt" build-metadata
+        echo "FIRMWARE=$PWD" >> "$GITHUB_ENV"
+        echo "status=success" >> "$GITHUB_OUTPUT"
+
+    - name: Upload Firmware to Artifacts
+      uses: actions/upload-artifact@v4
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: Generate Release Tag
+      id: tag
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+        echo "release_tag=dc-s576-$(date +"%Y.%m.%d-%H%M%S")-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+        {
+          echo "### RK3576-DC-S576 OpenWrt / LEDE Firmware"
+          echo "- 实际编译分支：$SOURCE_BRANCH"
+          echo "- 实际编译源码提交：$SOURCE_SHA"
+          echo "- LEDE 上游基线（仅溯源）：$UPSTREAM_LEDE_SHA"
+          echo "- 原始适配提交（仅溯源）：$ORIGINAL_ADAPTATION_SHA"
+          echo "- 基础适配待上板，DTS 编译通过不等于启动或外设验证通过。"
+          echo "- 网口、USB、PCIe、电源和存储仍需实机验证。"
+          echo "- DP / DP-to-HDMI、WiFi、蓝牙未验证，不声明可用。"
+          echo "- generic-rk3576 U-Boot 的 DDR、供电和启动介质兼容性未验证，不得直接刷写 eMMC。"
+          echo "- 应先确认串口、恢复手段及原始固件备份，再进行可恢复介质测试。"
+        } > "$GITHUB_WORKSPACE/release.txt"
+        echo "status=success" >> "$GITHUB_OUTPUT"
+
+    - name: Upload Firmware to Release
+      uses: softprops/action-gh-release@v2
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        target_commitish: ${{ env.SOURCE_SHA }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*

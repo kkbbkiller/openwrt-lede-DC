@@ -1,0 +1,77 @@
+From: RK3576 custom router <noreply@localhost>
+Subject: [PATCH] rockchip: rk3576-generic: enable SARADC download key
+
+The generic RK3576 U-Boot disables ADC and leaves the SARADC node
+disabled, so rockchip_dnl_key_pressed() always returns false.
+
+Even with ADC enabled, the lookup matches dev->name against "saradc",
+but on RK3576 the device is named after its DT node "adc@2ae00000",
+so the key is never sampled. Match the bound driver name instead.
+
+SARADC_AVDD1V8 on this board is fed by VCCA1V8_PLDO2_S0 (1.8 V), which
+is not described in this minimal DT, so provide vdd-microvolts for the
+driver's vref check.
+
+The download key threshold (KEY_DOWN_MAX_VAL = 30) is left unchanged.
+The sampled value is printed on the console so the real reading on
+this board can be measured, and CMD_ADC is enabled for manual checks:
+  adc single adc@2ae00000 1
+
+---
+--- a/arch/arm/dts/rk3576-generic.dts
++++ b/arch/arm/dts/rk3576-generic.dts
+@@ -22,6 +22,12 @@
+ 	};
+ };
+ 
++&saradc {
++	/* SARADC_AVDD1V8 is fed by VCCA1V8_PLDO2_S0; no regulator driver here. */
++	vdd-microvolts = <1800000>;
++	status = "okay";
++};
++
+ &sdhci {
+ 	bus-width = <8>;
+ 	cap-mmc-highspeed;
+--- a/arch/arm/mach-rockchip/boot_mode.c
++++ b/arch/arm/mach-rockchip/boot_mode.c
+@@ -51,7 +51,8 @@
+ 
+ 	ret = -ENODEV;
+ 	uclass_foreach_dev(dev, uc) {
+-		if (!strncmp(dev->name, "saradc", 6)) {
++		/* RK3576 names the node adc@..., so match the driver instead. */
++		if (!strcmp(dev->driver->name, "rockchip_saradc")) {
+ 			ret = adc_channel_single_shot(dev->name, 1, &val);
+ 			break;
+ 		}
+@@ -65,6 +66,9 @@
+ 		return false;
+ 	}
+ 
++	printf("download key: saradc ch1 = %u (pressed if %d..%d)\n",
++	       val, KEY_DOWN_MIN_VAL, KEY_DOWN_MAX_VAL);
++
+ 	if ((val >= KEY_DOWN_MIN_VAL) && (val <= KEY_DOWN_MAX_VAL))
+ 		return true;
+ 	else
+--- a/configs/generic-rk3576_defconfig
++++ b/configs/generic-rk3576_defconfig
+@@ -15,6 +15,7 @@
+ # CONFIG_SPL_RAW_IMAGE_SUPPORT is not set
+ CONFIG_CMD_MEMINFO=y
+ CONFIG_CMD_MEMINFO_MAP=y
++CONFIG_CMD_ADC=y
+ CONFIG_CMD_GPIO=y
+ CONFIG_CMD_GPT=y
+ CONFIG_CMD_MISC=y
+@@ -27,7 +28,8 @@
+ # CONFIG_OF_UPSTREAM is not set
+ CONFIG_OF_SPL_REMOVE_PROPS="clock-names interrupt-parent assigned-clocks assigned-clock-rates assigned-clock-parents"
+ CONFIG_NO_NET=y
+-# CONFIG_ADC is not set
++CONFIG_ADC=y
++CONFIG_SARADC_ROCKCHIP=y
+ # CONFIG_USB_FUNCTION_FASTBOOT is not set
+ CONFIG_ROCKCHIP_GPIO=y
+ CONFIG_SUPPORT_EMMC_RPMB=y

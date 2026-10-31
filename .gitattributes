@@ -1,1 +1,11 @@
 * -text
+
+# Keep DC-S576 board integration files usable on Linux after Windows edits.
+/.config text eol=lf
+/.github/workflows/build-openwrt.yml text eol=lf
+/.github/workflows/openwrt-ci.yml text eol=lf
+/package/boot/uboot-rockchip/Makefile text eol=lf
+/package/boot/uboot-rockchip/patches/950-rk3576-generic-enable-saradc-download-key.patch text eol=lf -whitespace
+/target/linux/rockchip/armv8/base-files/etc/board.d/02_network text eol=lf
+/target/linux/rockchip/image/armv8.mk text eol=lf
+/target/linux/rockchip/files/arch/arm64/boot/dts/rockchip/rk3576-dc-s576.dts text eol=lf

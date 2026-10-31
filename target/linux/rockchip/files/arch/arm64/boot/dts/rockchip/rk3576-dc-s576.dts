@@ -1,0 +1,854 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Copyright (c) 2026 OpenWrt / LEDE Project
+ * Device Tree for RK3576-DC-S576
+ * Features:
+ *  - Dual Gigabit Ethernet (GMAC0, GMAC1 / RGMII)
+ *  - Dual USB 3.0 (DWC3 DRD0 & DRD1) + USB 2.0 Host / Hub
+ *  - Display pipeline deferred: Android dump describes DSI/CS5518;
+ *    no unverified DP controller is instantiated for this kernel.
+ *  - PCIe 2.0 (RC Mode with 3.3V power regulator and PERST GPIO)
+ *  - SKI.WB800D80S.1 (AIC8800D80) SDIO WiFi + native SDIO HCI Bluetooth
+ *  - RK806 I2C PMIC and CPU regulator supplies
+ *  - eMMC 5.1 Storage
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/clock/rockchip,rk3576-cru.h>
+#include <dt-bindings/phy/phy.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/pinctrl/rockchip.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include "rk3576.dtsi"
+
+/ {
+	model = "RK3576-DC-S576";
+	compatible = "rockchip,rk3576-dc-s576", "rockchip,rk3576";
+
+	aliases {
+		ethernet0 = &gmac0;
+		ethernet1 = &gmac1;
+		mmc0 = &sdhci;
+		mmc1 = &sdio;
+	};
+
+	chosen {
+		stdout-path = "serial0:1500000n8";
+	};
+
+	/* 电源输入 12V DC */
+	vcc12v_dcin: vcc12v-dcin {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc12v_dcin";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <12000000>;
+		regulator-max-microvolt = <12000000>;
+	};
+
+	/* 5V 系统总线电源 */
+	vcc5v0_sys: vcc5v0-sys {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_sys";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc12v_dcin>;
+	};
+
+	vcc5v0_device: vcc5v0-device {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_device";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc12v_dcin>;
+	};
+
+	/* USB 5V VBUS 供电控制 (GPIO3_D4 = GPIO124, GPIO3_A2 = GPIO98) */
+	vcc5v0_host: vcc5v0-host {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_host";
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio3 RK_PD4 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_device>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb_host_pwren>;
+	};
+
+	vbus5v0_typec: vbus5v0-typec {
+		compatible = "regulator-fixed";
+		regulator-name = "vbus5v0_typec";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio3 RK_PA2 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_device>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb_otg0_pwren>;
+	};
+
+	/* USB Host 额外端口供电 (GPIO4_A1, GPIO4_A0, GPIO3_D5) */
+	vcc5v0_usb_host1: vcc5v0-usb-host1 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_usb_host1";
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio4 RK_PA1 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_device>;
+	};
+
+	vcc5v0_usb_host2: vcc5v0-usb-host2 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_usb_host2";
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio4 RK_PA0 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_device>;
+	};
+
+	vcc5v0_usb_host3: vcc5v0-usb-host3 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_usb_host3";
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio3 RK_PD5 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_device>;
+	};
+
+	/* EDF: GPIO3_D7 -> R71 -> U2.EN -> H1 VBUS. */
+	vcc5v0_usb_h1: vcc5v0-usb-h1 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_usb_h1";
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio3 RK_PD7 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_device>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb_h1_pwren>;
+	};
+
+	/* EDF: GPIO3_D6 -> R102 -> U17.EN -> H3 VBUS. */
+	vcc5v0_usb_h3: vcc5v0-usb-h3 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_usb_h3";
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio3 RK_PD6 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_device>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb_h3_pwren>;
+	};
+
+	/* PCIe 3.3V 供电控制 (GPIO0_D3 = GPIO27) */
+	vcc3v3_pcie: vcc3v3-pcie-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc3v3_pcie";
+		enable-active-high;
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&gpio0 RK_PD3 GPIO_ACTIVE_HIGH>;
+	};
+
+	/* SDIO WiFi 电源时序控制 (GPIO1_C6 = GPIO54 负责 WiFi 上电复位) */
+	sdio_pwrseq: sdio-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		clocks = <&hym8563>;
+		clock-names = "ext_clock";
+		pinctrl-names = "default";
+		pinctrl-0 = <&wifi_poweren_gpio>;
+		post-power-on-delay-ms = <200>;
+		reset-gpios = <&gpio1 RK_PC6 GPIO_ACTIVE_LOW>;
+		status = "okay";
+	};
+
+	/* External converters and hardware-switched S0 rails; no GPIO ownership. */
+	vcc_2v0_pldo_s3: regulator-vcc-2v0-pldo-s3 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_2v0_pldo_s3";
+		regulator-min-microvolt = <2000000>;
+		regulator-max-microvolt = <2000000>;
+		regulator-always-on;
+		regulator-boot-on;
+		vin-supply = <&vcc5v0_sys>;
+	};
+
+	vcc_1v1_nldo_s3: regulator-vcc-1v1-nldo-s3 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_1v1_nldo_s3";
+		regulator-min-microvolt = <1100000>;
+		regulator-max-microvolt = <1100000>;
+		regulator-always-on;
+		regulator-boot-on;
+		vin-supply = <&vcc5v0_sys>;
+	};
+
+	vcc_3v3_s0: regulator-vcc-3v3-s0 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_3v3_s0";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+		regulator-boot-on;
+		vin-supply = <&vcc_3v3_s3>;
+	};
+
+	vcc_1v8_s0: regulator-vcc-1v8-s0 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_1v8_s0";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+		regulator-boot-on;
+		vin-supply = <&vcc_1v8_s3>;
+	};
+
+	/* 板载状态指示灯 (GPIO0_A7 = GPIO7) */
+	leds: leds {
+		compatible = "gpio-leds";
+
+		work_led: work {
+			gpios = <&gpio0 RK_PA7 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "heartbeat";
+			default-state = "on";
+		};
+	};
+
+	/* Display migration is deferred, not converted to native HDMI.
+	 * Android dump: CS5518 at I2C3/0x39, LCD power GPIO0_C6,
+	 * panel enable GPIO0_C7. BSP driver/DSI graph need a separate port.
+	 */
+};
+
+/* =========================================================================
+ * 1. 千兆网口 GMAC0 (LAN / WAN) - RGMII-RXID 模式
+ * ========================================================================= */
+&gmac0 {
+	phy-mode = "rgmii-rxid";
+	clock_in_out = "output";
+	snps,reset-gpio = <&gpio2 RK_PB3 GPIO_ACTIVE_LOW>;
+	snps,reset-active-low;
+	snps,reset-delays-us = <0 20000 100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&eth0m0_miim
+		     &eth0m0_tx_bus2
+		     &eth0m0_rx_bus2
+		     &eth0m0_rgmii_clk
+		     &eth0m0_rgmii_bus
+		     &ethm0_clk0_25m_out>;
+	tx_delay = <0x21>;
+	assigned-clocks = <&cru CLK_GMAC0_125M_SRC>;
+	assigned-clock-rates = <125000000>;
+	phy-handle = <&rgmii_phy0>;
+	status = "okay";
+
+	mdio0: mdio {
+		compatible = "snps,dwmac-mdio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		rgmii_phy0: phy@1 {
+			compatible = "ethernet-phy-ieee802.3-c22";
+			reg = <0x1>;
+			clocks = <&cru REFCLKO25M_GMAC0_OUT>;
+			assigned-clocks = <&cru REFCLKO25M_GMAC0_OUT>;
+			assigned-clock-rates = <25000000>;
+		};
+	};
+};
+
+/* =========================================================================
+ * 2. 千兆网口 GMAC1 (LAN / WAN) - RGMII 模式，SoC 提供 TX/RX 延时
+ * ========================================================================= */
+&gmac1 {
+	/* PHY RX delay is disabled on this board; keep PHY delays off in software. */
+	phy-mode = "rgmii";
+	clock_in_out = "output";
+	snps,reset-gpio = <&gpio2 RK_PB4 GPIO_ACTIVE_LOW>;
+	snps,reset-active-low;
+	snps,reset-delays-us = <0 20000 100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&eth1m0_miim
+		     &eth1m0_tx_bus2
+		     &eth1m0_rx_bus2
+		     &eth1m0_rgmii_clk
+		     &eth1m0_rgmii_bus
+		     &ethm0_clk1_25m_out>;
+	tx_delay = <0x1e>;
+	rx_delay = <0x32>;
+	assigned-clocks = <&cru CLK_GMAC1_125M_SRC>;
+	assigned-clock-rates = <125000000>;
+	phy-handle = <&rgmii_phy1>;
+	status = "okay";
+
+	mdio1: mdio {
+		compatible = "snps,dwmac-mdio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		rgmii_phy1: phy@1 {
+			compatible = "ethernet-phy-ieee802.3-c22";
+			reg = <0x1>;
+			clocks = <&cru REFCLKO25M_GMAC1_OUT>;
+			assigned-clocks = <&cru REFCLKO25M_GMAC1_OUT>;
+			assigned-clock-rates = <25000000>;
+		};
+	};
+};
+
+/* =========================================================================
+ * 3. 双 USB 3.0 / USB 2.0 (DWC3 控制器及对应 PHY)
+ * ========================================================================= */
+/* USB 2.0 PHY 0 & 1 */
+&u2phy0 {
+	status = "okay";
+};
+
+&u2phy0_otg {
+	status = "okay";
+	/* Generic PHY supply enables the existing VBUS rail in fixed host mode.
+	 * Preserve the original GPIO; its Type-A VBUS routing needs board testing.
+	 */
+	phy-supply = <&vbus5v0_typec>;
+};
+
+&u2phy1 {
+	status = "okay";
+};
+
+&u2phy1_otg {
+	status = "okay";
+	phy-supply = <&vcc5v0_host>;
+};
+
+/* USB3 Combo PHY (PIPE PHY 1: 配合 USB3 DRD1 使用) */
+&combphy1_psu {
+	status = "okay";
+};
+
+/* USB0 is wired to a fixed Type-A host, not a dual-role Type-C port.
+ * Avoid the unused OTG role-switch path; host/USB3 operation needs testing.
+ */
+&usb_drd0_dwc3 {
+	dr_mode = "host";
+	status = "okay";
+	phys = <&u2phy0_otg>, <&usbdp_phy PHY_TYPE_USB3>;
+	phy-names = "usb2-phy", "usb3-phy";
+};
+
+/* USB 3.0 控制器 1 (标准 USB 3.0 Host 接口) */
+&usb_drd1_dwc3 {
+	dr_mode = "host";
+	status = "okay";
+	phys = <&u2phy1_otg>, <&combphy1_psu PHY_TYPE_USB3>;
+	phy-names = "usb2-phy", "usb3-phy";
+};
+
+/* =========================================================================
+ * 4. PCIe 2.0 接口 (支持 PCIe 网卡 / NVMe / 5G 模块)
+ * ========================================================================= */
+&combphy0_ps {
+	status = "okay";
+};
+
+&pcie0 {
+	/* Linux 6.18.58 pcie-dw-rockchip drives 0 to reset, 1 to release.
+	 * Keep ACTIVE_HIGH as in the Android dump; do not invert PERST# here.
+	 */
+	reset-gpios = <&gpio2 RK_PB1 GPIO_ACTIVE_HIGH>;
+	vpcie3v3-supply = <&vcc3v3_pcie>;
+	phys = <&combphy0_ps PHY_TYPE_PCIE>;
+	phy-names = "pcie-phy";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pcie0m0_pins>;
+	rockchip,skip-scan-in-resume;
+	status = "okay";
+};
+
+/* =========================================================================
+ * 5. USB-DP combo PHY: use mainline single-provider USB3 binding.
+ *    Display remains deferred pending the board's DSI/CS5518 driver port.
+ *    This does not assert that the physical board lacks DisplayPort.
+ * ========================================================================= */
+&usbdp_phy {
+	/* Fixed split from the board wiring and Android DT: USB on RX1/TX1,
+	 * DP on the remaining pair of lanes. This does not enable DP display.
+	 */
+	rockchip,dp-lane-mux = <2 3>;
+	status = "okay";
+};
+
+/* =========================================================================
+ * 6. SDIO WiFi 模块接口 (MMC1)
+ * ========================================================================= */
+&sdio {
+	max-frequency = <150000000>;
+	no-sd;
+	no-mmc;
+	supports-sdio;
+	bus-width = <4>;
+	disable-wp;
+	cap-sd-highspeed;
+	cap-sdio-irq;
+	keep-power-in-suspend;
+	vmmc-supply = <&vcc_3v3_s3>;
+	vqmmc-supply = <&vcc_1v8_s3>;
+	mmc-pwrseq = <&sdio_pwrseq>;
+	non-removable;
+	rockchip,default-sample-phase = <90>;
+	sd-uhs-sdr104;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc1m0_bus4 &sdmmc1m0_cmd &sdmmc1m0_clk>;
+	status = "okay";
+};
+
+/* =========================================================================
+ * 7. eMMC 5.1 板载存储
+ * ========================================================================= */
+&sdhci {
+	bus-width = <8>;
+	no-sdio;
+	no-sd;
+	non-removable;
+	max-frequency = <200000000>;
+	/* HS200 SDR fallback; keep CQE unchanged to test timing separately. */
+	mmc-hs200-1_8v;
+	no-mmc-hs400;
+	full-pwr-cycle-in-suspend;
+	status = "okay";
+};
+
+/* =========================================================================
+ * 8. 调试串口与蓝牙串口
+ * ========================================================================= */
+/* 调试串口 UART0 (波特率 1500000) */
+&uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0m0_xfer>;
+	status = "okay";
+};
+
+/* U1.CLKOUT -> R6 -> R181 -> U6016.LPO. No SoC alarm IRQ
+ * is declared: U1.INT goes to the discrete wake circuit, not a proven GPIO.
+ */
+&i2c2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c2m0_xfer>;
+	status = "okay";
+
+	hym8563: rtc@51 {
+		compatible = "haoyu,hym8563";
+		reg = <0x51>;
+		#clock-cells = <0>;
+		clock-output-names = "hym8563";
+	};
+};
+
+/* AIC firmware selects its SDIO mailbox HCI transport (CONFIG_SDIO_BT=y).
+ * UART4 is physically wired but unused; no fake Broadcom serdev child.
+ */
+&uart4 {
+	status = "disabled";
+};
+
+/* No BT low-power handshake is enabled by the native AIC package.
+ * Keep BT enable and host-to-device wake asserted for the initial SDIO mode.
+ * GPIO0_B1 device-to-host wake is not used as an unverified suspend IRQ.
+ */
+&gpio1 {
+	bt-enable-hog {
+		gpio-hog;
+		gpios = <RK_PC7 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "aic-bt-enable";
+	};
+
+	bt-awake-hog {
+		gpio-hog;
+		gpios = <RK_PD4 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "aic-bt-awake";
+	};
+};
+
+/* =========================================================================
+ * 9. Pinctrl 引脚定义补充
+ * ========================================================================= */
+&pinctrl {
+	usb {
+		usb_host_pwren: usb-host-pwren {
+			rockchip,pins = <3 RK_PD4 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		usb_otg0_pwren: usb-otg0-pwren {
+			rockchip,pins = <3 RK_PA2 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		usb_h1_pwren: usb-h1-pwren {
+			rockchip,pins = <3 RK_PD7 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		usb_h3_pwren: usb-h3-pwren {
+			rockchip,pins = <3 RK_PD6 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	wireless-wlan {
+		/* SDIO in-band IRQ is used; no unverified GPIO0_B0 wake IRQ. */
+		wifi_poweren_gpio: wifi-poweren-gpio {
+			rockchip,pins = <1 RK_PC6 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+};
+
+/* RK806 power tree: LEDE rock-4d policy, board Android voltage limits. */
+
+/* CPU regulator bindings, following LEDE rock-4d. */
+&cpu_b0 {
+	cpu-supply = <&vdd_cpu_big_s0>;
+};
+
+&cpu_b1 {
+	cpu-supply = <&vdd_cpu_big_s0>;
+};
+
+&cpu_b2 {
+	cpu-supply = <&vdd_cpu_big_s0>;
+};
+
+&cpu_b3 {
+	cpu-supply = <&vdd_cpu_big_s0>;
+};
+
+&cpu_l0 {
+	cpu-supply = <&vdd_cpu_lit_s0>;
+};
+
+&cpu_l1 {
+	cpu-supply = <&vdd_cpu_lit_s0>;
+};
+
+&cpu_l2 {
+	cpu-supply = <&vdd_cpu_lit_s0>;
+};
+
+&cpu_l3 {
+	cpu-supply = <&vdd_cpu_lit_s0>;
+};
+
+&i2c1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c1m0_xfer>;
+	status = "okay";
+
+	rk806: pmic@23 {
+		compatible = "rockchip,rk806";
+		reg = <0x23>;
+		#gpio-cells = <2>;
+		gpio-controller;
+		interrupt-parent = <&gpio0>;
+		interrupts = <6 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pmic_pins &rk806_dvs1_null
+			     &rk806_dvs2_null &rk806_dvs3_null>;
+		system-power-controller;
+		vcc1-supply = <&vcc5v0_sys>;
+		vcc2-supply = <&vcc5v0_sys>;
+		vcc3-supply = <&vcc5v0_sys>;
+		vcc4-supply = <&vcc5v0_sys>;
+		vcc5-supply = <&vcc5v0_sys>;
+		vcc6-supply = <&vcc5v0_sys>;
+		vcc7-supply = <&vcc5v0_sys>;
+		vcc8-supply = <&vcc5v0_sys>;
+		vcc9-supply = <&vcc5v0_sys>;
+		vcc10-supply = <&vcc5v0_sys>;
+		vcc11-supply = <&vcc_2v0_pldo_s3>;
+		vcc12-supply = <&vcc5v0_sys>;
+		vcc13-supply = <&vcc_1v1_nldo_s3>;
+		vcc14-supply = <&vcc_1v1_nldo_s3>;
+		vcca-supply = <&vcc5v0_sys>;
+
+		/* LEDE native PWRCTRL policy; A4 is PMIC_SLEEP, never a GPIO hog. */
+		rk806_dvs1_null: dvs1-null-pins {
+			pins = "gpio_pwrctrl1";
+			function = "pin_fun0";
+		};
+
+		rk806_dvs2_null: dvs2-null-pins {
+			pins = "gpio_pwrctrl2";
+			function = "pin_fun0";
+		};
+
+		rk806_dvs3_null: dvs3-null-pins {
+			pins = "gpio_pwrctrl3";
+			function = "pin_fun0";
+		};
+
+
+		regulators {
+			vdd_cpu_big_s0: dcdc-reg1 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-enable-ramp-delay = <400>;
+				regulator-min-microvolt = <550000>;
+				regulator-max-microvolt = <950000>;
+				regulator-name = "vdd_cpu_big_s0";
+				regulator-ramp-delay = <12500>;
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vdd_npu_s0: dcdc-reg2 {
+				regulator-boot-on;
+				regulator-enable-ramp-delay = <400>;
+				regulator-min-microvolt = <550000>;
+				regulator-max-microvolt = <950000>;
+				regulator-name = "vdd_npu_s0";
+				regulator-ramp-delay = <12500>;
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vdd_cpu_lit_s0: dcdc-reg3 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <550000>;
+				regulator-max-microvolt = <950000>;
+				regulator-name = "vdd_cpu_lit_s0";
+				regulator-ramp-delay = <12500>;
+				regulator-state-mem {
+					regulator-off-in-suspend;
+					regulator-suspend-microvolt = <750000>;
+				};
+			};
+
+			vcc_3v3_s3: dcdc-reg4 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <3300000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-name = "vcc_3v3_s3";
+				regulator-state-mem {
+					regulator-on-in-suspend;
+					regulator-suspend-microvolt = <3300000>;
+				};
+			};
+
+			vdd_gpu_s0: dcdc-reg5 {
+				regulator-boot-on;
+				regulator-enable-ramp-delay = <400>;
+				regulator-min-microvolt = <550000>;
+				regulator-max-microvolt = <900000>;
+				regulator-name = "vdd_gpu_s0";
+				regulator-ramp-delay = <12500>;
+				regulator-state-mem {
+					regulator-off-in-suspend;
+					regulator-suspend-microvolt = <850000>;
+				};
+			};
+
+			vddq_ddr_s0: dcdc-reg6 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-name = "vddq_ddr_s0";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vdd_logic_s0: dcdc-reg7 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <550000>;
+				regulator-max-microvolt = <800000>;
+				regulator-name = "vdd_logic_s0";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vcc_1v8_s3: dcdc-reg8 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+				regulator-name = "vcc_1v8_s3";
+				regulator-state-mem {
+					regulator-on-in-suspend;
+					regulator-suspend-microvolt = <1800000>;
+				};
+			};
+
+			vdd2_ddr_s3: dcdc-reg9 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-name = "vdd2_ddr_s3";
+				regulator-state-mem {
+					regulator-on-in-suspend;
+				};
+			};
+
+			vdd_ddr_s0: dcdc-reg10 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <550000>;
+				regulator-max-microvolt = <1200000>;
+				regulator-name = "vdd_ddr_s0";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vcca_1v8_s0: pldo-reg1 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+				regulator-name = "vcca_1v8_s0";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vcca1v8_pldo2_s0: pldo-reg2 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+				regulator-name = "vcca1v8_pldo2_s0";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vdda_1v2_s0: pldo-reg3 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <1200000>;
+				regulator-max-microvolt = <1200000>;
+				regulator-name = "vdda_1v2_s0";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vcca_3v3_s0: pldo-reg4 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <3300000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-name = "vcca_3v3_s0";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vccio_sd_s0: pldo-reg5 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-name = "vccio_sd_s0";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vcca1v8_pldo6_s3: pldo-reg6 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+				regulator-name = "vcca1v8_pldo6_s3";
+				regulator-state-mem {
+					regulator-on-in-suspend;
+					regulator-suspend-microvolt = <1800000>;
+				};
+			};
+
+			vdd_0v75_s3: nldo-reg1 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <750000>;
+				regulator-max-microvolt = <750000>;
+				regulator-name = "vdd_0v75_s3";
+				regulator-state-mem {
+					regulator-on-in-suspend;
+					regulator-suspend-microvolt = <750000>;
+				};
+			};
+
+			vdda_ddr_pll_s0: nldo-reg2 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <850000>;
+				regulator-max-microvolt = <850000>;
+				regulator-name = "vdda_ddr_pll_s0";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vdda0v75_hdmi_s0: nldo-reg3 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <837500>;
+				regulator-max-microvolt = <837500>;
+				regulator-name = "vdda0v75_hdmi_s0";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vdda_0v85_s0: nldo-reg4 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <850000>;
+				regulator-max-microvolt = <850000>;
+				regulator-name = "vdda_0v85_s0";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+
+			vdda_0v75_s0: nldo-reg5 {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-min-microvolt = <750000>;
+				regulator-max-microvolt = <750000>;
+				regulator-name = "vdda_0v75_s0";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
+			};
+		};
+	};
+};
