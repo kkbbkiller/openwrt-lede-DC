@@ -299,8 +299,8 @@
 		     &eth1m0_rgmii_clk
 		     &eth1m0_rgmii_bus
 		     &ethm0_clk1_25m_out>;
-	tx_delay = <0x1e>;
-	rx_delay = <0x32>;
+	tx_delay = <0x20>;
+	rx_delay = <0x36>;
 	assigned-clocks = <&cru CLK_GMAC1_125M_SRC>;
 	assigned-clock-rates = <125000000>;
 	phy-handle = <&rgmii_phy1>;
