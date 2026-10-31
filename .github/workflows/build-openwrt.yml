@@ -3,6 +3,11 @@ name: Build OpenWrt for RK3576-DC-S576
 on:
   repository_dispatch:
   workflow_dispatch:
+    inputs:
+      config_only:
+        description: Validate configuration only (skip firmware build)
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -61,7 +66,23 @@ jobs:
       id: package
       run: |
         cd openwrt
+        mkdir -p build-metadata/config-check
+        cp .config build-metadata/config-check/after-feeds.config
+        # feeds update refreshes an existing .config before feed packages are
+        # installed. Restore the committed seed after install, then expand it.
+        git show HEAD:.config > .config
+        cp .config build-metadata/config-check/requested.config
         make defconfig
+        cp .config build-metadata/config-check/resolved.config
+        cp feeds.conf.default build-metadata/config-check/
+        for file in tmp/.config-package.in tmp/.packageinfo; do
+          if [ -f "$file" ]; then cp "$file" build-metadata/config-check/; fi
+        done
+        for feed in feeds/*; do
+          if git -C "$feed" rev-parse HEAD >/dev/null 2>&1; then
+            printf '%s %s\n' "${feed##*/}" "$(git -C "$feed" rev-parse HEAD)"
+          fi
+        done > build-metadata/config-check/feeds-revisions.txt
         grep -qx 'CONFIG_TARGET_rockchip=y' .config
         grep -qx 'CONFIG_TARGET_rockchip_armv8=y' .config
         grep -qx 'CONFIG_TARGET_rockchip_armv8_DEVICE_rockchip_rk3576-dc-s576=y' .config
@@ -85,17 +106,23 @@ jobs:
                              + ", ".join(missing))
         print("Required wireless / Bluetooth / diagnostic packages: PASS")
         PY
+        if [ "${{ inputs.config_only }}" = "true" ]; then
+          echo "Configuration-only validation passed; firmware build skipped."
+          exit 0
+        fi
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
     - name: Prepare Host Tools and Kernel Sources
+      if: inputs.config_only != true
       run: |
         cd openwrt
         make tools/install -j"$(nproc)" V=s
         make target/linux/prepare V=s
 
     - name: DTS Preflight and Build Metadata
+      if: inputs.config_only != true
       run: |
         set -euo pipefail
         cd openwrt
@@ -155,6 +182,7 @@ jobs:
         if-no-files-found: warn
 
     - name: Compile the Firmware
+      if: inputs.config_only != true
       id: compile
       run: |
         cd openwrt
