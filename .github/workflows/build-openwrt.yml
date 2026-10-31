@@ -56,6 +56,8 @@ jobs:
         [ -e "$GITHUB_WORKSPACE/$CONFIG_FILE" ] && cp -f "$GITHUB_WORKSPACE/$CONFIG_FILE" openwrt/.config
         chmod +x "$GITHUB_WORKSPACE/$DIY_P1_SH"
         cp -vf "$GITHUB_WORKSPACE/rk3576-custom-router.dts" openwrt/
+        rm -rf openwrt/uboot-patches
+        cp -vr "$GITHUB_WORKSPACE/uboot-patches" openwrt/
         cp -vf "$GITHUB_WORKSPACE/$DIY_P1_SH" openwrt/
         cd openwrt
         ./$DIY_P1_SH
@@ -141,6 +143,7 @@ jobs:
         done > build-metadata/feeds-revisions.txt
         cp target/linux/rockchip/image/armv8.mk build-metadata/
         cp package/boot/uboot-rockchip/Makefile build-metadata/uboot-rockchip.mk
+        cp -r uboot-patches build-metadata/
 
     - name: Upload DTS Preflight Metadata
       uses: actions/upload-artifact@v4

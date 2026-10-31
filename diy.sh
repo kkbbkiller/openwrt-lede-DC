@@ -8,6 +8,13 @@ DTS_DIR="target/linux/rockchip/files/arch/arm64/boot/dts/rockchip"
 mkdir -p "$DTS_DIR"
 cp -vf rk3576-custom-router.dts "$DTS_DIR/rk3576-custom-router.dts"
 
+# generic-rk3576 U-Boot 补丁：启用 SARADC 下载键检测（阈值保持上游 0..30）。
+UBOOT_PATCH_DIR="package/boot/uboot-rockchip/patches"
+test -d "$UBOOT_PATCH_DIR"
+grep -qx 'PKG_VERSION:=2026.07' package/boot/uboot-rockchip/Makefile \
+  || { echo "uboot-rockchip 版本已变，需重新核对 U-Boot 补丁"; exit 1; }
+cp -vf uboot-patches/*.patch "$UBOOT_PATCH_DIR/"
+
 python3 - <<'PY'
 from pathlib import Path
 import re
